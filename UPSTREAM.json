@@ -1,0 +1,11 @@
+{
+  "repository": "https://github.com/TrackinBIT/HIMLoco-for-Go2W",
+  "commit": "011693738c61603c3f22f2bce755098dd36fa7eb",
+  "paper": "https://arxiv.org/abs/2605.13058",
+  "paper_version": "v1",
+  "retrieved_at": "2026-09-15",
+  "independent_implementation": true,
+  "optimizer": "PPO (HIMLoco-style clipped objective)",
+  "s1_rewards": "Original GO2WRoughCfg rewards, all tasks",
+  "simulator": "Isaac Gym Preview 4"
+}

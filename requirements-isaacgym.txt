@@ -1,0 +1,6 @@
+# Legacy backend only, in a separate Isaac Gym Preview 4 environment.
+numpy>=1.21,<1.24
+scipy>=1.7,<1.14
+matplotlib>=3.3
+tensorboard>=2.8,<2.15
+pytest>=7,<8

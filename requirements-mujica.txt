@@ -1,0 +1,7 @@
+# Native Isaac Lab backend; use the existing Isaac Lab/Sim and CUDA torch.
+# Do not install the bundled legacy rsl_rl into the Isaac Lab environment.
+numpy>=1.24,<2
+scipy>=1.10,<2
+matplotlib>=3.3
+tensorboard>=2.13
+pytest>=7

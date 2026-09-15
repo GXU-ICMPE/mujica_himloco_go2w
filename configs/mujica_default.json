@@ -1,0 +1,32 @@
+{
+  "model": {
+    "actor_hidden_dims": [512, 256, 128],
+    "critic_hidden_dims": [512, 256, 128],
+    "latent_dim": 16,
+    "estimator_kwargs": {
+      "gru_dim": 64,
+      "encoder_hidden_dims": [128, 64],
+      "reference_hidden_dims": [128, 64],
+      "num_prototypes": 32,
+      "temperature": 3.0,
+      "sinkhorn_epsilon": 0.05
+    }
+  },
+  "selector": {
+    "actor_hidden_dims": [256, 128],
+    "critic_hidden_dims": [512, 256, 128]
+  },
+  "ppo": {
+    "learning_rate": 0.001,
+    "num_learning_epochs": 5,
+    "num_mini_batches": 4,
+    "gamma": 0.99,
+    "lam": 0.95,
+    "clip_param": 0.2,
+    "entropy_coef": 0.005,
+    "schedule": "adaptive",
+    "desired_kl": 0.01
+  },
+  "steps_per_env": 48,
+  "save_interval": 1000
+}

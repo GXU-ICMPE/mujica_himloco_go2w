@@ -1,0 +1,10 @@
+{
+  "enabled": true,
+  "calibrated": false,
+  "knee_fraction": 0.5,
+  "calf_min_factor": 0.3,
+  "calf_cos_offset": 0.0,
+  "calf_cos_amplitude": 1.0,
+  "calf_cos_phase": -1.5707963267948966,
+  "joints": {}
+}
