@@ -1,0 +1,78 @@
+{
+  "schema_version": 1,
+  "source_asset_root": "/home/xgy/重要文档/LocoWheeledLegged_X5_migration/LocoWheeledLegged/locowheeledlegged/assets/x5",
+  "source_selected_by_user": true,
+  "urdf": "urdf/x5.urdf",
+  "expected": {
+    "root_link": "base",
+    "links": 23,
+    "fixed_joints": 6,
+    "revolute_joints": 12,
+    "continuous_joints": 4,
+    "mass_kg": 115.780333,
+    "wheel_radius_m": 0.1005
+  },
+  "files": {
+    "urdf/x5.urdf": {
+      "size_bytes": 22123,
+      "sha256": "094a7ab9a612409e71ddca1082b5a46d61b4d181cc07ca9cbd1af9b4ffc05875",
+      "source_size_bytes": 22122,
+      "source_sha256": "6af458563542b6fe7ff05d99238c9c752e11cb20016b8b8608d754c6551bd901"
+    },
+    "meshes/x5/PTZ.STL": {
+      "size_bytes": 6457734,
+      "sha256": "89b441006fb16a546244e800be9f7ca744ea7e2c1d27b7f060be75efcee8d5f7"
+    },
+    "meshes/x5/calf.STL": {
+      "size_bytes": 3095584,
+      "sha256": "669c8ff28369a5cc797e6dd659cbef46a4c9f41986ff97bd612589a4c68e3f60"
+    },
+    "meshes/x5/calf_mirror.STL": {
+      "size_bytes": 3096084,
+      "sha256": "3e77a750263144a2d645c6a376c8bd6925448c7cf758372665cc489f974c9613"
+    },
+    "meshes/x5/fire.STL": {
+      "size_bytes": 2062684,
+      "sha256": "629f2321975249bc89334b5aa32d4fc8aa5cc458b08aa1f4549051bdf668395e"
+    },
+    "meshes/x5/front_camera.STL": {
+      "size_bytes": 825984,
+      "sha256": "98edaa83fc2ae349a79ede5024b15bc7731a2c469a45e9716bd588edb03eb120"
+    },
+    "meshes/x5/hip.STL": {
+      "size_bytes": 2808884,
+      "sha256": "0d640ab7376d7c1454500475802a37d3836ba562913f08f3202ca419fbd477da"
+    },
+    "meshes/x5/hip_mirror.STL": {
+      "size_bytes": 2807584,
+      "sha256": "7e71048dbe5956901b9c346fb1b1a33adb714eede1664a2c3d1f3eccb2f1d39a"
+    },
+    "meshes/x5/lidar.STL": {
+      "size_bytes": 772084,
+      "sha256": "e94cc845d3d4fce1a49582da163d0c8a09a0cf88fa5aeb05eca4dc391e12e1a2"
+    },
+    "meshes/x5/thigh.STL": {
+      "size_bytes": 3933084,
+      "sha256": "60adc97efae13726052d495c77307b4ba626dc4864cfff7c99cd0929187284e9"
+    },
+    "meshes/x5/thigh_mirror.STL": {
+      "size_bytes": 3933384,
+      "sha256": "eb38091a076eb2d60367b93a304ad2c36caeedd49a7d5f00c5072208e7919bb5"
+    },
+    "meshes/x5/trunk.STL": {
+      "size_bytes": 17264084,
+      "sha256": "12f9660e17190af402f1fec1e03ceb5d3fba42856f4896d0dd1105a66013e89b"
+    },
+    "meshes/x5/wheel.STL": {
+      "size_bytes": 7224584,
+      "sha256": "6c2c4a06bb3afc923d08f0565e9c85ae9752f4ef31432b91a8829c03534c29b2"
+    },
+    "meshes/x5/wheel_mirror.STL": {
+      "size_bytes": 7224584,
+      "sha256": "69dffa9ef4b421896a7e56643be8f5aad42115f83315010bb4240b0b8c3d00f7"
+    }
+  },
+  "import_notes": [
+    "URDF import adds a single trailing newline; XML content is otherwise byte-identical. All meshes are byte-identical to the selected source."
+  ]
+}

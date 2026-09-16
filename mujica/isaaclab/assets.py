@@ -1,6 +1,6 @@
-"""Prepare the local URDF, preserving the Gym task's 19 rigid bodies.
+"""Prepare the selected local URDF while preserving its named body contract.
 
-Merge fixed attachments except the two head links before the Lab importer.
+Merge fixed attachments before the Lab importer (retain Go2W's two head links).
 Geometry, mass, center of mass and inertia are transformed into the parent
 frame. No simulator is needed. The original URDF and meshes stay untouched.
 """
@@ -12,7 +12,8 @@ from pathlib import Path
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from .settings import URDF_PATH, PROJECT_ROOT
+from .settings import PROJECT_ROOT
+from .robots import robot_spec
 
 
 def transform(origin):
@@ -67,11 +68,12 @@ def merge_inertia(parent, child, pose):
         ("ixx", 0, 0), ("ixy", 0, 1), ("ixz", 0, 2), ("iyy", 1, 1), ("iyz", 1, 2), ("izz", 2, 2))})
 
 
-def prepare_urdf(source=URDF_PATH, cache_dir=None):
-    source = Path(source).resolve()
+def prepare_urdf(source=None, cache_dir=None, robot="go2w"):
+    spec = robot_spec(robot)
+    source = Path(source or spec.urdf).resolve()
     # Include the conversion implementation so a corrected merger invalidates its cache.
-    digest = hashlib.sha256(source.read_bytes() + Path(__file__).read_bytes()).hexdigest()[:16]
-    output = Path(cache_dir or PROJECT_ROOT / ".cache/isaaclab") / digest / "go2w.urdf"
+    digest = hashlib.sha256(str(source).encode() + source.read_bytes() + Path(__file__).read_bytes()).hexdigest()[:16]
+    output = Path(cache_dir or PROJECT_ROOT / ".cache/isaaclab") / digest / f"{robot}.urdf"
     if output.is_file():
         return output
     root = ET.parse(source).getroot()
@@ -96,8 +98,9 @@ def prepare_urdf(source=URDF_PATH, cache_dir=None):
                 set_origin(descendant, pose @ transform(descendant.find("origin")))
         root.remove(child)
         root.remove(joint)
-    if len(root.findall("link")) != 19:
-        raise ValueError("Prepared Go2W must retain 19 bodies including both head links")
+    expected = {name for group in spec.collision_groups for name in group}
+    if {link.get("name") for link in root.findall("link")} != expected:
+        raise ValueError(f"Prepared {robot} bodies differ from the named policy contract")
     output.parent.mkdir(parents=True, exist_ok=True)
     ET.indent(root)
     temp = output.with_suffix(".tmp")

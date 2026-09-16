@@ -1,5 +1,7 @@
 # MUJICA 原文与当前实现审查
 
+> 本文的机器人参数、维度和奖励描述对应原 Go2W 分支。2026-09-16 新增 X5 默认训练入口，详见 [X5 迁移说明](X5_MIGRATION_ZH.md)。
+
 日期：2026-09-15。对象仅为本目录 `MUJICA_HIMLoco_Go2W_PPO/mujica_himloco_go2w`。
 依据 [arXiv v1 原文](https://arxiv.org/html/2605.13058v1) 的 Fig.2、III-B/C、IV-A/D、V-A 和 Table II/III，
 同时阅读当前模型、优化器、runner、环境和电机实现。本轮审查没有运行仿真或训练。

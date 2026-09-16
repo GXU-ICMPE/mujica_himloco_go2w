@@ -8,7 +8,7 @@ setup(
     packages=find_packages(),
     package_data={'mujica.isaaclab': ['defaults.json']},
     author_email='',
-    description='MUJICA PPO for Go2W with native Isaac Lab and legacy Isaac Gym backends',
+    description='MUJICA PPO for X5 and Go2W with native Isaac Lab and legacy Go2W Isaac Gym backends',
     # Isaac Lab/Sim and CUDA torch are provisioned by the existing simulator
     # environment. This package must not install isaacgym or replace rsl-rl.
     install_requires=['numpy', 'scipy', 'matplotlib', 'tensorboard'],

@@ -9,6 +9,8 @@ from .skills import SKILL_NAMES
 def parser():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--backend", choices=("isaaclab", "isaacgym"), default="isaaclab")
+    p.add_argument("--robot", choices=("x5", "go2w"), default=None,
+                   help="New Isaac Lab runs default to x5; resume/S2 inherit checkpoint robot")
     p.add_argument("--terrain", choices=("trimesh", "plane"), default=None)
     p.add_argument("--terrain-rows", type=int, default=None)
     p.add_argument("--terrain-cols", type=int, default=None)
@@ -40,6 +42,7 @@ def prepare_training(args):
     from .config import training_config
     from .runner import load_checkpoint
     from .isaaclab.settings import default_settings, settings_from_dict, validate_settings, validate_checkpoint_backend
+    from .isaaclab.robots import robot_spec
 
     config, saved = training_config(args.stage), None
     if args.resume:
@@ -60,6 +63,15 @@ def prepare_training(args):
         raise ValueError("S1 playback requires --skill " + "/".join(SKILL_NAMES))
     if args.low_level and (args.stage != "s2" or args.resume):
         raise ValueError("--low-level is only used to start a new S2 run")
+    snapshot = (saved or {}).get("metadata", {}).get("environment_config")
+    saved_robot = (snapshot or {}).get('asset', {}).get('name', 'go2w')
+    robot = getattr(args, 'robot', None) or (saved_robot if saved else 'x5')
+    if saved and robot != saved_robot:
+        raise ValueError(f"Checkpoint is for {saved_robot}, requested {robot}; start a fresh S1 run")
+    spec = robot_spec(robot)
+    if not args.resume:
+        config['model'].update(critic_dim=spec.critic_dim, collision_dim=len(spec.collision_groups))
+        config['selector']['critic_dim'] = spec.critic_dim
     if args.config:
         override = json.loads(Path(args.config).read_text())
         allowed = {"model", "selector", "ppo", "steps_per_env", "save_interval"}
@@ -78,8 +90,11 @@ def prepare_training(args):
         raise ValueError("Resume configuration differs: use the checkpoint algorithm configuration")
     if not args.resume:
         config["seed"] = args.seed
-    snapshot = (saved or {}).get("metadata", {}).get("environment_config")
-    settings = settings_from_dict(copy.deepcopy(snapshot)) if snapshot else default_settings()
+    if (config['model']['critic_dim'] != spec.critic_dim
+            or config['model']['collision_dim'] != len(spec.collision_groups)
+            or config['selector']['critic_dim'] != spec.critic_dim):
+        raise ValueError(f"Model dimensions must match the {robot} observation contract")
+    settings = settings_from_dict(copy.deepcopy(snapshot)) if snapshot else default_settings(robot)
     settings.mujica.stage = args.stage
     settings.env.num_envs = args.num_envs
     before = json.dumps(settings, sort_keys=True)
@@ -110,6 +125,8 @@ def main():
     if args.num_envs < 1 or args.play_steps < 1 or (args.iterations is not None and args.iterations < 1):
         raise SystemExit("num-envs, play-steps and iterations must be positive")
     if args.backend == "isaacgym":
+        if args.robot == 'x5':
+            raise SystemExit('X5 is supported by the Isaac Lab backend only')
         if any((args.terrain, args.terrain_rows, args.terrain_cols, args.no_randomization, args.check_config)):
             raise SystemExit("Terrain/diagnostic flags in this entrypoint require --backend isaaclab")
         # Legacy implementation owns the mandatory isaacgym-before-torch import.
@@ -144,12 +161,13 @@ def main():
         np.random.seed(config["seed"])
         torch.manual_seed(config["seed"])
         env = MUJICAVecEnv(MUJICAEnv(build_env_cfg(settings, args.device, config["seed"])))
-        log_dir = args.log_dir or str(Path("logs") / ("mujica_lab_" + args.stage) /
+        log_dir = args.log_dir or str(Path("logs") / ("mujica_lab_" + settings.asset.name + '_' + args.stage) /
                                      datetime.now().strftime("%Y%m%d_%H%M%S"))
         low_level = args.low_level or (args.resume if args.stage == "s2" else None)
         runner = MUJICARunner(env, config, log_dir, device=args.device, low_level=low_level)
         if args.resume:
             runner.load(args.resume, load_optimizer=not args.play)
+            env.set_training_iteration(runner.iteration)
         if args.play:
             from .play import play
             play(runner, steps=args.play_steps, skill=args.skill)

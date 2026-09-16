@@ -37,7 +37,8 @@ class LocomotionTasks(TerrainRewards):
     def check_termination(self):
         # Neither the assigned terrain skill nor the S2 selected skill changes
         # failure handling or the episode clock.
-        self.failure_buf = (self.contact_forces[:, self.termination_contact_indices].norm(dim=-1) > 1.0).any(dim=1)
+        threshold = getattr(self.settings.mujica, 'termination_contact_threshold', 1.0)
+        self.failure_buf = (self.contact_forces[:, self.termination_contact_indices].norm(dim=-1) > threshold).any(dim=1)
         self.terrain_exit_buf = torch.zeros_like(self.failure_buf)
         if self.custom_origins:
             half_extent = torch.tensor([self.settings.terrain.terrain_length, self.settings.terrain.terrain_width],

@@ -117,6 +117,9 @@ def _vector(metadata, key, count, fallback=None):
 
 
 def validate_metadata(metadata):
+    if metadata.get('robot') == 'x5' or 'RF_HAA' in metadata.get('joint_names', []):
+        raise ValueError('X5 training/export is supported, but this MuJoCo runner uses the Go2W model/controller. '
+                         'An X5 scene and matching target-limit/stop-PI controller are required.')
     validate_skill_metadata(metadata)
     names = metadata.get("joint_names", [])
     if len(names) != 16 or len(set(names)) != 16:

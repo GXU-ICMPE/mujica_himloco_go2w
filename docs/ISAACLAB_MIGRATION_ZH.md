@@ -1,5 +1,7 @@
 # MUJICA 当前状态与 Isaac Lab 迁移
 
+> 本文的机器人参数、维度和奖励描述对应原 Go2W 分支。2026-09-16 新增 X5 默认训练入口，详见 [X5 迁移说明](X5_MIGRATION_ZH.md)。
+
 日期：2026-09-15。检查对象是本目录 `MUJICA_HIMLoco_Go2W_PPO/mujica_himloco_go2w`。
 
 ## 结论

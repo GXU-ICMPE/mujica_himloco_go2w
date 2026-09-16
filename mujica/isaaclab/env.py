@@ -10,43 +10,49 @@ from isaaclab.terrains.utils import create_prim_from_mesh
 
 from mujica.motor import DCMotorLimiter
 from .math import torch_rand_float, yaw_rotate
-from .settings import JOINT_NAMES, URDF_PATH, joint_contract, joint_indices, settings_from_dict
-from .task_logic import TaskLogic, COLLISION_GROUPS
+from .settings import joint_contract, joint_indices, settings_from_dict
+from .robots import robot_spec
+from .x5_task import X5Task
+from .task_logic import TaskLogic
 from .terrain import HeightField
 from mujica.terrain import assign_terrain_columns
 from mujica.skills import skill_metadata
 from mujica.rewards import reward_metadata
 
 
-class MUJICAEnv(TaskLogic, DirectRLEnv):
+class MUJICAEnv(X5Task, TaskLogic, DirectRLEnv):
     def __init__(self, cfg, render_mode=None, **kwargs):
         self.settings = settings_from_dict(cfg.task_settings)
         self.stage = self.settings.mujica.stage
-        self.urdf_path = URDF_PATH
+        self.spec = robot_spec(self.settings.asset.name)
+        self.is_x5 = self.spec.name == 'x5'
+        self.urdf_path = self.spec.urdf
         super().__init__(cfg, render_mode, **kwargs)
         self.dt = self.step_dt
         self.num_actions = self.num_dof = 16
-        self.dof_names = list(JOINT_NAMES)
-        self.joint_ids = torch.tensor(joint_indices(self.robot.joint_names), device=self.device)
+        self.dof_names = list(self.spec.joints)
+        self.joint_ids = torch.tensor(joint_indices(self.robot.joint_names, self.spec.name), device=self.device)
         self.body_names = list(self.robot.body_names)
         self.num_bodies = len(self.body_names)
-        expected = {name for group in COLLISION_GROUPS for name in group}
+        expected = {name for group in self.spec.collision_groups for name in group}
         if set(self.body_names) != expected:
-            raise RuntimeError(f"Expected 19 Go2W bodies including both head links; imported {self.body_names}")
+            raise RuntimeError(f"Expected named {self.spec.name} bodies {sorted(expected)}; imported {self.body_names}")
         self.collision_body_groups = [torch.tensor([self.body_names.index(n) for n in group], device=self.device)
-                                      for group in COLLISION_GROUPS]
+                                      for group in self.spec.collision_groups]
         self.sensor_ids = torch.tensor([self.contact_sensor.body_names.index(n) for n in self.body_names], device=self.device)
-        self.clearance_body_indices = torch.tensor([self.body_names.index(f"{leg}_foot")
-            for leg in ("FL", "FR", "RL", "RR")], device=self.device)
+        self.clearance_body_indices = torch.tensor([self.body_names.index(n) for n in self.spec.feet], device=self.device)
         self.feet_indices = self.clearance_body_indices
-        self.wheel_indices = torch.tensor([i for i, n in enumerate(JOINT_NAMES) if "foot_joint" in n], device=self.device)
-        self.hip_indices = torch.tensor([i for i, n in enumerate(JOINT_NAMES) if "hip_joint" in n], device=self.device)
+        self.wheel_indices = torch.tensor([self.dof_names.index(n) for n in self.spec.wheels], device=self.device)
+        self.hip_indices = torch.tensor([self.dof_names.index(n) for n in self.spec.hips], device=self.device)
+        self.leg_indices = torch.tensor([i for i, n in enumerate(self.dof_names) if n not in self.spec.wheels], device=self.device)
         self.base_index = self.body_names.index("base")
         self.penalised_contact_indices = torch.tensor([i for i, n in enumerate(self.body_names)
             if any(part in n for part in self.settings.asset.penalize_contacts_on)], device=self.device)
         self.termination_contact_indices = torch.tensor([i for i, n in enumerate(self.body_names)
             if any(part in n for part in self.settings.asset.terminate_after_contacts_on)], device=self.device)
         self._initialize_buffers()
+        if self.is_x5:
+            self._initialize_x5()
         self._randomize_body_properties()
         self.init_done = True
 
@@ -75,13 +81,17 @@ class MUJICAEnv(TaskLogic, DirectRLEnv):
         s = self.settings
         def zeros(*shape, dtype=torch.float):
             return torch.zeros(self.num_envs, *shape, device=self.device, dtype=dtype)
-        self.default_dof_pos = torch.tensor([[s.init_state.default_joint_angles[n] for n in JOINT_NAMES]], device=self.device)
-        self.p_gains = torch.tensor([next(v for k, v in s.control.stiffness.items() if k in n) for n in JOINT_NAMES], device=self.device)
-        self.d_gains = torch.tensor([next(v for k, v in s.control.damping.items() if k in n) for n in JOINT_NAMES], device=self.device)
-        limits = joint_contract()
-        self.torque_limits = torch.tensor([limits[n]["effort"] for n in JOINT_NAMES], device=self.device)
-        self.dof_vel_limits = torch.tensor([limits[n]["velocity"] for n in JOINT_NAMES], device=self.device)
-        self.motor_limiter = DCMotorLimiter(JOINT_NAMES, self.torque_limits, self.dof_vel_limits, s.mujica.motor)
+        self.default_dof_pos = torch.tensor([[s.init_state.default_joint_angles[n] for n in self.dof_names]], device=self.device)
+        self.p_gains = torch.tensor([next(v for k, v in s.control.stiffness.items() if k in n) for n in self.dof_names], device=self.device)
+        self.d_gains = torch.tensor([next(v for k, v in s.control.damping.items() if k in n) for n in self.dof_names], device=self.device)
+        limits = joint_contract(robot=self.spec.name)
+        self.torque_limits = torch.tensor([limits[n]["effort"] for n in self.dof_names], device=self.device)
+        self.dof_vel_limits = torch.tensor([limits[n]["velocity"] for n in self.dof_names], device=self.device)
+        pos_limits = torch.tensor([[limits[self.dof_names[i]][key] for key in ('lower', 'upper')]
+                                   for i in self.leg_indices.tolist()], device=self.device)
+        center = pos_limits.mean(-1, keepdim=True)
+        self.soft_joint_limits = center + (pos_limits-center)*s.rewards.soft_dof_pos_limit
+        self.motor_limiter = DCMotorLimiter(self.dof_names, self.torque_limits, self.dof_vel_limits, s.mujica.motor)
         self.Kp_factors, self.Kd_factors, self.motor_strength_factors = (zeros(1)+1 for _ in range(3))
         self.actions, self.last_actions, self.last_last_actions = (zeros(16) for _ in range(3))
         self.torques, self.last_dof_vel, self.last_root_vel = zeros(16), zeros(16), zeros(6)
@@ -93,7 +103,7 @@ class MUJICAEnv(TaskLogic, DirectRLEnv):
         self.gravity_vec = zeros(3)
         self.gravity_vec[:, 2] = -1
         self.base_lin_vel, self.base_ang_vel, self.projected_gravity = (zeros(3) for _ in range(3))
-        self.history_buf, self.privileged_obs_buf = zeros(348), zeros(270)
+        self.history_buf, self.privileged_obs_buf = zeros(348), zeros(self.spec.critic_dim)
         self._pending_reset = torch.ones(self.num_envs, dtype=torch.bool, device=self.device)
         self._successor_ready = False
         self.rew_buf, self.motor_violation = zeros(), zeros()
@@ -132,8 +142,12 @@ class MUJICAEnv(TaskLogic, DirectRLEnv):
         self.base_quat = self.root_states[:, 3:7]
         self.dof_pos = self.robot.data.joint_pos[:, self.joint_ids].clone()
         self.dof_vel = self.robot.data.joint_vel[:, self.joint_ids].clone()
-        self.rigid_body_states = self.robot.data.body_state_w.clone()
+        self.rigid_body_states = (self.robot.data.body_link_state_w if self.is_x5 else self.robot.data.body_state_w).clone()
         self.contact_forces = self.contact_sensor.data.net_forces_w[:, self.sensor_ids].clone()
+        if self.is_x5:
+            self.dof_acc = self.robot.data.joint_acc[:, self.joint_ids].clone()
+            self.applied_torques = self.robot.data.applied_torque[:, self.joint_ids].clone()
+            self.contact_force_history = self.contact_sensor.data.net_forces_w_history[:, :, self.sensor_ids].clone()
         self._refresh_kinematics()
 
     def _get_heights(self):
@@ -161,7 +175,11 @@ class MUJICAEnv(TaskLogic, DirectRLEnv):
         if s.randomize_com_displacement:
             coms = view.get_coms().clone()
             # The bundled Gym code assigns this range as the base COM, rather than adding it.
-            coms[:, self.base_index, :3] = torch_rand_float(*s.com_displacement_range, (self.num_envs, 3), "cpu")
+            displacement = torch_rand_float(*s.com_displacement_range, (self.num_envs, 3), "cpu")
+            if self.is_x5:
+                coms[:, self.base_index, :3] += displacement
+            else:
+                coms[:, self.base_index, :3] = displacement
             view.set_coms(coms, ids)
 
     def _randomize_reset_properties(self, env_ids):
@@ -211,12 +229,18 @@ class MUJICAEnv(TaskLogic, DirectRLEnv):
 
     def _get_dones(self):
         self._refresh_state()
-        interval = max(1, int(self.settings.commands.resampling_time/self.dt))
-        self._resample_commands((self.episode_length_buf % interval == 0).nonzero().flatten())
+        if not self.is_x5:
+            interval = max(1, int(self.settings.commands.resampling_time/self.dt))
+            self._resample_commands((self.episode_length_buf % interval == 0).nonzero().flatten())
         d = self.settings.domain_rand
         if d.push_robots and self.common_step_counter % max(1, math.ceil(d.push_interval_s/self.dt)) == 0:
             velocity = self.root_states[:, 7:13].clone()
-            velocity[:, :2] = torch_rand_float(-d.max_push_vel_xy, d.max_push_vel_xy, (self.num_envs, 2), self.device)
+            delta = torch_rand_float(-d.max_push_vel_xy, d.max_push_vel_xy, (self.num_envs, 2), self.device)
+            if self.is_x5:
+                velocity[:, :2] += delta
+                velocity[:, 5] += torch_rand_float(-.15, .15, (self.num_envs,), self.device)
+            else:
+                velocity[:, :2] = delta
             self.robot.write_root_velocity_to_sim(velocity)
             self.root_states[:, 7:13] = velocity
             self._refresh_kinematics()
@@ -227,6 +251,11 @@ class MUJICAEnv(TaskLogic, DirectRLEnv):
 
     def _get_rewards(self):
         self.compute_reward()
+        if self.is_x5:
+            # Score the command that produced this action; present the next
+            # command in the successor observation (never change it mid-action).
+            self.command_time_left -= self.dt
+            self._resample_commands(((self.command_time_left <= 0) & ~self.reset_buf).nonzero().flatten())
         # DirectRLEnv invokes rewards before auto-reset. Capture this one noise
         # sample and the full true successor here for both GAE and SwAV.
         self.compute_observations()
@@ -255,6 +284,8 @@ class MUJICAEnv(TaskLogic, DirectRLEnv):
             metrics["rew_"+name] = (total[env_ids]/self.episode_length_buf[env_ids].clamp(min=1)/self.dt).mean()
             total[env_ids] = 0
         self._reset_reward_diagnostics(env_ids)
+        if self.is_x5:
+            metrics.update(self._reset_x5(env_ids))
         if self.custom_origins:
             metrics["terrain_level"] = self.terrain_levels.float().mean()
         self.extras["episode"] = metrics
@@ -263,9 +294,17 @@ class MUJICAEnv(TaskLogic, DirectRLEnv):
         state = self.robot.data.default_root_state[env_ids].clone()
         state[:, :3] += self.env_origins[env_ids]
         state[:, :2] += torch_rand_float(-0.25, 0.25, (len(env_ids), 2), self.device)
-        state[:, 7:13] = torch_rand_float(-0.5, 0.5, (len(env_ids), 6), self.device)
-        # Gym resets always used [0.5,1.5]*q_default, irrespective of its unused flag.
-        q = self.default_dof_pos * torch_rand_float(0.5, 1.5, (len(env_ids), 16), self.device)
+        if self.is_x5:
+            state[:, 7:13] = torch_rand_float(-.1, .1, (len(env_ids), 6), self.device)
+            state[:, 9] = 0.
+            q = self.default_dof_pos.expand(len(env_ids), -1).clone()
+            if self.settings.domain_rand.randomize_initial_joint_pos:
+                q[:, :12] += torch_rand_float(*self.settings.domain_rand.initial_joint_pos_range,
+                                              (len(env_ids), 12), self.device)
+        else:
+            state[:, 7:13] = torch_rand_float(-0.5, 0.5, (len(env_ids), 6), self.device)
+            # Preserve the original Gym reset distribution for Go2W.
+            q = self.default_dof_pos * torch_rand_float(0.5, 1.5, (len(env_ids), 16), self.device)
         q_sim = self.robot.data.default_joint_pos[env_ids].clone()
         q_sim[:, self.joint_ids] = q
         self.robot.write_root_state_to_sim(state, env_ids)
@@ -282,6 +321,8 @@ class MUJICAEnv(TaskLogic, DirectRLEnv):
         self.dof_pos[env_ids], self.dof_vel[env_ids] = q, 0.0
         self.base_quat = self.root_states[:, 3:7]
         self.contact_forces[env_ids] = 0
+        if self.is_x5:
+            self.contact_force_history[env_ids] = 0
         self.episode_start_xy[env_ids] = state[:, :2]
         self._refresh_kinematics()
         # Analytic FK avoids reusing stale terminal wheel positions or stepping
@@ -304,6 +345,7 @@ class MUJICAEnv(TaskLogic, DirectRLEnv):
     def export_metadata(self):
         metadata = super().export_metadata()
         metadata.update(simulator="isaaclab", quaternion_order="wxyz",
+            robot=self.spec.name,
             simulator_joint_names=list(self.robot.joint_names), policy_to_sim_joint_indices=self.joint_ids.cpu().tolist(),
             urdf_path=str(self.urdf_path), prepared_urdf_path=self.cfg.robot.spawn.asset_path,
             disturbance_interval_unit="control_steps")

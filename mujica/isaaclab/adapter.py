@@ -20,6 +20,9 @@ class MUJICAVecEnv:
     def set_skill(self, ids):
         self.env.set_skill(ids)
 
+    def set_training_iteration(self, iteration):
+        self.env.training_iteration = iteration
+
     def step(self, actions):
         obs, reward, terminated, truncated, info = self.env.step(actions)
         return (obs["policy"], obs["critic"], reward, terminated | truncated, info,

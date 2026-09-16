@@ -13,7 +13,27 @@ from isaaclab.utils import configclass
 
 from mujica.motor import DCMotorLimiter
 from .assets import prepare_urdf
-from .settings import JOINT_NAMES, joint_contract, validate_settings
+from .settings import joint_contract, validate_settings
+from .robots import robot_spec
+
+
+def spawn_x5_from_urdf(prim_path, cfg, translation=None, orientation=None, **kwargs):
+    """Apply contact offsets on editable colliders before environment cloning.
+
+    Adapted from X5loco (Copyright 2026 Robot-Nav, Apache-2.0);
+    see third_party/X5loco-LICENSE. Added kwargs for the MUJICA spawner.
+    """
+    from isaaclab.sim.utils import make_uninstanceable
+    prim = sim_utils.spawn_from_urdf(prim_path, cfg.replace(collision_props=None),
+                                   translation=translation, orientation=orientation, **kwargs)
+    # The outer clone wrapper supplies the concrete source path here.
+    for body in prim.GetChildren():
+        collisions = body.GetChild("collisions")
+        if collisions.IsValid():
+            make_uninstanceable(str(collisions.GetPath()))
+    if cfg.collision_props is not None:
+        sim_utils.modify_collision_properties(prim_path, cfg.collision_props)
+    return prim
 
 
 @configclass
@@ -32,13 +52,15 @@ class MUJICAEnvCfg(DirectRLEnvCfg):
 
 def build_env_cfg(settings, device="cuda:0", seed=1):
     validate_settings(settings)
-    urdf = prepare_urdf()
-    limits = joint_contract()
-    motor = DCMotorLimiter(JOINT_NAMES, torch.tensor([limits[n]["effort"] for n in JOINT_NAMES]),
-                          torch.tensor([limits[n]["velocity"] for n in JOINT_NAMES]), settings.mujica.motor)
+    spec = robot_spec(settings.asset.name)
+    names = spec.joints
+    urdf = prepare_urdf(robot=spec.name)
+    limits = joint_contract(robot=spec.name)
+    motor = DCMotorLimiter(names, torch.tensor([limits[n]["effort"] for n in names]),
+                          torch.tensor([limits[n]["velocity"] for n in names]), settings.mujica.motor)
     a, p = settings.asset, settings.sim.physx
     cfg = MUJICAEnvCfg(
-        seed=seed, task_settings=json.loads(json.dumps(settings)),
+        seed=seed, task_settings=json.loads(json.dumps(settings)), state_space=spec.critic_dim,
         decimation=settings.control.decimation, episode_length_s=settings.env.episode_length_s,
         sim=sim_utils.SimulationCfg(device=device, dt=settings.sim.dt,
             render_interval=settings.control.decimation, gravity=tuple(settings.sim.gravity),
@@ -50,8 +72,9 @@ def build_env_cfg(settings, device="cuda:0", seed=1):
         robot=ArticulationCfg(
             prim_path="/World/envs/env_.*/Robot",
             spawn=sim_utils.UrdfFileCfg(
-                asset_path=str(urdf), usd_dir=str(urdf.parent / "usd"), usd_file_name="go2w.usd",
+                asset_path=str(urdf), usd_dir=str(urdf.parent / "usd"), usd_file_name=f"{spec.name}.usd",
                 fix_base=a.fix_base_link, merge_fixed_joints=False, activate_contact_sensors=True,
+                self_collision=(a.self_collisions == 0),
                 replace_cylinders_with_capsules=False,
                 joint_drive=sim_utils.UrdfConverterCfg.JointDriveCfg(
                     target_type="none", gains=sim_utils.UrdfConverterCfg.JointDriveCfg.PDGainsCfg(stiffness=0.0, damping=0.0)),
@@ -72,11 +95,17 @@ def build_env_cfg(settings, device="cuda:0", seed=1):
                 joint_pos=dict(settings.init_state.default_joint_angles), joint_vel={".*": 0.0}),
             actuators={"effort": ImplicitActuatorCfg(
                 joint_names_expr=[".*"], stiffness=0.0, damping=0.0,
-                effort_limit_sim={name: float(motor.peak[i]) for i, name in enumerate(JOINT_NAMES)},
-                # Apply the inherited speed-dependent torque envelope ourselves.
-                velocity_limit_sim=1.0e9, armature=a.armature, friction=0.0)},
+                effort_limit_sim={name: float(motor.peak[i]) for i, name in enumerate(names)},
+                # X5 uses URDF speed caps; Go2W applies its torque envelope in Python.
+                velocity_limit_sim=({n: limits[n]['velocity'] for n in names} if spec.name == 'x5' else 1.0e9),
+                armature=a.armature, friction=0.0)},
             soft_joint_pos_limit_factor=settings.rewards.soft_dof_pos_limit),
     )
+    if spec.name == 'x5':
+        # Decorate once here: the wrapper applies overrides before cloning.
+        from isaaclab.sim.utils import clone
+        cfg.robot.spawn.func = clone(spawn_x5_from_urdf)
+        cfg.contact_sensor.history_length = 3
     cfg.viewer.eye = (10.0, 0.0, 6.0)
     cfg.viewer.lookat = (4.0, 4.0, 0.0)
     return cfg

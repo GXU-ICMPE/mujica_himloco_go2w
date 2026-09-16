@@ -116,11 +116,15 @@ class TaskLogic(LocomotionTasks):
                                  for group in self.collision_body_groups], dim=1).float()
         states = self.rigid_body_states.view(self.num_envs, self.num_bodies, 13)
         wheel_xyz = states[:, self.clearance_body_indices, :3]
-        # Vertical clearance from the lower wheel surface to the heightfield.
-        # This radius correction is a documented approximation on tilted wheels.
-        clearance = (wheel_xyz[..., 2] - self._sample_ground_at(wheel_xyz) -
-                     self.settings.mujica.wheel_radius).clamp(min=0.0)
-        heights = (self.root_states[:, 2:3] - 0.5 - self.measured_heights).clamp(-1, 1)
+        radius = self.settings.mujica.wheel_radius
+        if getattr(self, 'is_x5', False):
+            axes = torch.zeros_like(wheel_xyz)
+            axes[..., 1] = 1.
+            axis_z = quat_apply(states[:, self.clearance_body_indices, 3:7], axes)[..., 2]
+            radius = radius * (1-axis_z.square()).clamp_min(0).sqrt()
+        clearance = (wheel_xyz[..., 2] - self._sample_ground_at(wheel_xyz) - radius).clamp(min=0.0)
+        offset = getattr(self.settings.mujica, 'height_observation_offset', .5)
+        heights = (self.root_states[:, 2:3] - offset - self.measured_heights).clamp(-1, 1)
         heights = heights * self.obs_scales.height_measurements
         privileged = torch.cat((obs, self.base_lin_vel*self.obs_scales.lin_vel,
                                 collision, clearance, heights), dim=-1)
@@ -145,33 +149,41 @@ class TaskLogic(LocomotionTasks):
 
     def _reset_wheel_kinematics(self, env_ids):
         states = self.rigid_body_states.view(self.num_envs, self.num_bodies, 13)
-        # Analytic kinematics for the bundled Go2-W URDF. Fixed hip offsets and
-        # link lengths are read once from the asset rather than inferred indices.
+        # Traverse the selected URDF's chains, including any fixed joints.
         if not hasattr(self, "_fk_description"):
             import os
             import xml.etree.ElementTree as ET
             path = str(self.urdf_path)
             root = ET.parse(os.path.abspath(path)).getroot()
             self._fk_description = {}
+            by_child = {j.find('child').get('link'): j for j in root.findall('joint')}
+            self._fk_chains = []
+            for index in self.clearance_body_indices.tolist():
+                child, chain = self.body_names[index], []
+                while child != 'base':
+                    joint = by_child[child]
+                    chain.insert(0, joint.get('name'))
+                    child = joint.find('parent').get('link')
+                self._fk_chains.append(chain)
             for joint in root.findall("joint"):
                 origin = joint.find("origin")
-                xyz = [float(x) for x in origin.get("xyz", "0 0 0").split()]
-                rpy = [float(x) for x in origin.get("rpy", "0 0 0").split()]
+                xyz = [float(x) for x in (origin.get("xyz", "0 0 0") if origin is not None else "0 0 0").split()]
+                rpy = [float(x) for x in (origin.get("rpy", "0 0 0") if origin is not None else "0 0 0").split()]
                 axis = joint.find("axis")
                 self._fk_description[joint.get("name")] = (xyz, rpy,
                     [float(x) for x in axis.get("xyz", "1 0 0").split()] if axis is not None else [1., 0., 0.])
         n = len(env_ids)
-        for leg, body_idx in zip(("FL", "FR", "RL", "RR"), self.clearance_body_indices):
+        for chain, body_idx in zip(self._fk_chains, self.clearance_body_indices):
             pos = self.root_states[env_ids, :3].clone()
             quat = self.root_states[env_ids, 3:7].clone()
-            for segment in ("hip", "thigh", "calf", "foot"):
-                name = f"{leg}_{segment}_joint"
+            for name in chain:
                 xyz, rpy, axis = self._fk_description[name]
                 offset = torch.tensor(xyz, device=self.device).expand(n, -1)
                 pos += quat_apply(quat, offset)
                 roll, pitch, yaw = (torch.full((n,), v, device=self.device) for v in rpy)
                 quat = quat_mul(quat, quat_from_euler_xyz(roll, pitch, yaw))
-                q = self.dof_pos[env_ids, self.dof_names.index(name)]
+                q = (self.dof_pos[env_ids, self.dof_names.index(name)] if name in self.dof_names
+                     else torch.zeros(n, device=self.device))
                 axis_t = torch.tensor(axis, device=self.device).expand(n, -1)
                 quat = quat_mul(quat, quat_from_angle_axis(q, axis_t))
             states[env_ids, body_idx, :3] = pos
@@ -205,8 +217,12 @@ class TaskLogic(LocomotionTasks):
             "obs_scales": {name: getattr(self.obs_scales, name)
                 for name in ("ang_vel", "lin_vel", "dof_pos", "dof_vel")},
             "motor": dict(self.motor_limiter.config),
-            "collision_groups": [list(group) for group in COLLISION_GROUPS],
-            "clearance_order": ["FL", "FR", "RL", "RR"],
+            "collision_groups": [list(group) for group in self.spec.collision_groups],
+            "clearance_order": [name.split('_')[0] for name in self.spec.feet],
+            "control": dict(self.settings.control),
+            "init_base_height": self.settings.init_state.pos[2],
+            "control_decimation": self.settings.control.decimation,
+            "clip_observations": self.settings.normalization.clip_observations,
             "wheel_radius": self.settings.mujica.wheel_radius,
             "history_order": "newest_first",
         }

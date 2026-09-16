@@ -8,6 +8,7 @@ import json
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--robot', choices=('x5', 'go2w'), default='x5')
     parser.add_argument("--num-envs", type=int, default=9)
     parser.add_argument("--steps", type=int, default=350)
     parser.add_argument("--stage", choices=("s1", "s2"), default="s1")
@@ -26,14 +27,14 @@ def main():
         from .env import MUJICAEnv
         from .env_cfg import build_env_cfg
         from .settings import default_settings
-        settings = default_settings()
+        settings = default_settings(args.robot)
         settings.env.num_envs = args.num_envs
         settings.mujica.stage = args.stage
         settings.terrain.mesh_type = args.terrain
         settings.terrain.num_rows, settings.terrain.num_cols = 2, 6
         env = MUJICAVecEnv(MUJICAEnv(build_env_cfg(settings, args.device, seed=1)))
         obs, critic = env.reset()
-        assert obs.shape == (args.num_envs, 348) and critic.shape == (args.num_envs, 270)
+        assert obs.shape == (args.num_envs, 348) and critic.shape == (args.num_envs, settings.env.num_privileged_obs)
         action = torch.zeros(args.num_envs, 16, device=env.device)
         done_count = 0
         for step in range(args.steps):
@@ -47,7 +48,7 @@ def main():
                     raise RuntimeError(f"Non-finite {name} at step {step}")
             if not torch.equal(ids, dones.nonzero().flatten()):
                 raise RuntimeError("Terminal IDs do not match reset flags")
-            if terminal.shape != (len(ids), 270):
+            if terminal.shape != (len(ids), settings.env.num_privileged_obs):
                 raise RuntimeError("Invalid terminal critic shape")
             done_count += int(dones.sum())
         print(json.dumps(dict(status="PASS", verification="physics_interface_only", stage=args.stage,

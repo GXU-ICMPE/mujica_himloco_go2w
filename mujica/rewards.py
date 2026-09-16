@@ -17,6 +17,18 @@ def _values(obj):
 
 def validate_reward_settings(rewards, terrain):
     cfg = _values(rewards)
+    if cfg.get('profile') == 'x5_v8_mujica_v1':
+        from .isaaclab.x5_config import REWARD_SCALES
+        if set(cfg['scales']) != set(REWARD_SCALES):
+            raise ValueError('X5 v8 requires the complete shared reward profile')
+        if not all(math.isfinite(v) for v in cfg['scales'].values()):
+            raise ValueError('X5 reward weights must be finite')
+        if cfg['only_positive_rewards'] or cfg['tracking_sigma'] <= 0:
+            raise ValueError('X5 v8 uses unclipped rewards and a positive tracking kernel')
+        curriculum = cfg['lin_vel_z_curriculum']
+        if curriculum['end_iteration'] <= curriculum['start_iteration']:
+            raise ValueError('Invalid vertical-velocity reward curriculum')
+        return
     if "terrain_adaptation" not in cfg:
         raise ValueError("Reward settings predate shared terrain posture v1; start a new S1 run with the current defaults")
     profile = _values(cfg["terrain_adaptation"])
@@ -45,6 +57,11 @@ def validate_reward_settings(rewards, terrain):
 
 def reward_metadata(rewards):
     cfg = _values(rewards)
+    if cfg.get('profile') == 'x5_v8_mujica_v1':
+        return dict(name=cfg['profile'], parameter_source='local_terrain_geometry_and_command',
+                    parameters={k: v for k, v in cfg.items() if k != 'scales'},
+                    s1_weights={name: dict(cfg['scales']) for name in SKILL_NAMES},
+                    s2_weights={name: cfg['scales'][name] for name in ('tracking_lin_vel', 'tracking_ang_vel')})
     profile = dict(_values(cfg["terrain_adaptation"]))
     scales = dict(_values(cfg["scales"]))
     return dict(name="shared_terrain_posture_v1", parameter_source="task_ids",

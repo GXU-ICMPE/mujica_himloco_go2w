@@ -73,7 +73,8 @@ def export_checkpoint(checkpoint, output):
                     has_selector=selector is not None, frame_dim=low.frame_dim,
                     history_len=low.history_len, hidden_dim=low.estimator.gru_dim,
                     history_order="newest_first", skill_values=dict(SKILL_VALUES),
-                    control_decimation=4, clip_observations=100.0)
+                    control_decimation=round(metadata.get('control_dt', .02)/metadata.get('sim_dt', .005)),
+                    clip_observations=metadata.get('clip_observations', 100.0))
     output.with_suffix(".json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
     return scripted, metadata
 

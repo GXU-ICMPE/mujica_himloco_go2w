@@ -1,10 +1,11 @@
-"""Frozen Gym task parameters and the policy interface, without Gym imports."""
+"""Robot-specific task settings and policy interfaces, without simulator imports."""
 import json
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from mujica.skills import TASK_FAMILY, TASK_CONTRACT_VERSION, validate_skill_metadata
 from mujica.terrain import validate_terrain
 from mujica.rewards import validate_reward_settings
+from .robots import robot_spec
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 URDF_PATH = PROJECT_ROOT / "resources/robots/go2w/urdf/go2w.urdf"
@@ -28,37 +29,53 @@ def settings_from_dict(data):
                      for key, value in data.items()})
 
 
-def default_settings():
-    return settings_from_dict(json.loads(Path(__file__).with_name("defaults.json").read_text()))
+def default_settings(robot="go2w"):
+    data = json.loads(Path(__file__).with_name("defaults.json").read_text())
+    robot_spec(robot)
+    if robot == "x5":
+        from .x5_config import configure_x5
+        configure_x5(data)
+    return settings_from_dict(data)
 
 
-def joint_contract(path=URDF_PATH):
+def joint_contract(path=None, robot="go2w"):
+    spec = robot_spec(robot)
+    path = Path(path or spec.urdf)
     root = ET.parse(path).getroot()
     joints = {j.get("name"): j for j in root.findall("joint") if j.get("type") != "fixed"}
-    if set(joints) != set(JOINT_NAMES):
-        raise ValueError("URDF actuated joints do not match the Go2W policy interface")
+    if set(joints) != set(spec.joints):
+        raise ValueError(f"URDF actuated joints do not match the {robot} policy interface")
     result = {}
-    for name in JOINT_NAMES:
+    for name in spec.joints:
         joint = joints[name]
         limit = joint.find("limit")
-        result[name] = {key: float(limit.get(key)) for key in ("lower", "upper", "effort", "velocity")}
+        result[name] = {key: float(limit.get(key)) for key in ("effort", "velocity")}
+        # Continuous wheel angles are excluded from position-limit penalties.
+        result[name].update(lower=float(limit.get("lower", "-3.141592653589793")),
+                            upper=float(limit.get("upper", "3.141592653589793")))
     for mesh in root.findall(".//mesh"):
         if not (Path(path).parent / mesh.get("filename")).is_file():
             raise FileNotFoundError(mesh.get("filename"))
     return result
 
 
-def joint_indices(simulator_names):
-    if len(simulator_names) != 16 or set(simulator_names) != set(JOINT_NAMES):
-        raise ValueError("Imported articulation must contain exactly the 16 named Go2W joints")
-    return [simulator_names.index(name) for name in JOINT_NAMES]
+def joint_indices(simulator_names, robot="go2w"):
+    names = robot_spec(robot).joints
+    if len(simulator_names) != 16 or set(simulator_names) != set(names):
+        raise ValueError(f"Imported articulation must contain exactly the 16 named {robot} joints")
+    return [simulator_names.index(name) for name in names]
 
 
 def validate_settings(settings):
     if settings.mujica.stage not in ("s1", "s2"):
         raise ValueError("stage must be s1 or s2")
-    if (settings.env.num_observations, settings.env.num_privileged_obs, settings.env.num_actions) != (348, 270, 16):
-        raise ValueError("MUJICA requires observations=348, critic=270, actions=16")
+    spec = robot_spec(settings.asset.name)
+    if (settings.rewards.get('profile') == 'x5_v8_mujica_v1') != (spec.name == 'x5'):
+        raise ValueError('The X5 v8 reward/control profile must be paired with the X5 robot')
+    if set(settings.init_state.default_joint_angles) != set(spec.joints):
+        raise ValueError(f'Default joint angles must follow the {spec.name} named joint contract')
+    if (settings.env.num_observations, settings.env.num_privileged_obs, settings.env.num_actions) != (348, spec.critic_dim, 16):
+        raise ValueError(f"MUJICA {spec.name} requires observations=348, critic={spec.critic_dim}, actions=16")
     if not settings.terrain.measure_heights or len(settings.terrain.measured_points_x)*len(settings.terrain.measured_points_y) != 187:
         raise ValueError("MUJICA requires the 17 x 11 height grid")
     if settings.commands.heading_command or settings.commands.curriculum:
@@ -83,10 +100,11 @@ def validate_settings(settings):
         raise ValueError("Command, episode and disturbance intervals must be positive")
 
 
-def validate_checkpoint_backend(saved, *, resume):
+def validate_checkpoint_backend(saved, *, resume, robot=None):
     metadata = saved.get("metadata", {})
     if resume and metadata.get("simulator") != "isaaclab":
         raise ValueError("--resume requires an Isaac Lab checkpoint; a Gym checkpoint is not a continuation of Lab physics")
-    if metadata.get("joint_names") != list(JOINT_NAMES):
+    robot = robot or metadata.get("environment_config", {}).get("asset", {}).get("name", "go2w")
+    if metadata.get("joint_names") != list(robot_spec(robot).joints):
         raise ValueError("Checkpoint joint order is missing or differs from the Isaac Lab policy ABI")
     validate_skill_metadata(metadata)

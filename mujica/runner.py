@@ -42,6 +42,8 @@ class MUJICARunner:
                 raise ValueError("S2 requires a trained S1 checkpoint via --low-level")
             ckpt = load_checkpoint(low_level, self.device)
             validate_skill_metadata(ckpt.get("metadata", {}))
+            if ckpt.get('metadata', {}).get('joint_names') != self.metadata.get('joint_names'):
+                raise ValueError('S2 low-level checkpoint belongs to a different robot joint contract')
             if ckpt["config"]["model"] != config["model"]:
                 raise ValueError("Low-level model configuration must match the S1 checkpoint")
             self.low_model.load_state_dict(ckpt["low_model"])
@@ -87,6 +89,8 @@ class MUJICARunner:
         self.model.train()
         stop_at = self.iteration + iterations
         while self.iteration < stop_at:
+            if hasattr(self.env, 'set_training_iteration'):
+                self.env.set_training_iteration(self.iteration)
             start = time.perf_counter()
             episode_metrics = {}
             episode_counts = {}
@@ -126,8 +130,8 @@ class MUJICARunner:
                         fields.update(old_mean=result["old_mean"], old_std=result["old_std"],
                                       history=history_before, hidden=hidden_before,
                                       velocity_targets=critic_before[:, 58:61],
-                                      collision_targets=critic_before[:, 61:79],
-                                      wheel_targets=critic_before[:, 79:83],
+                                      collision_targets=critic_before[:, 61:61+self.config['model']['collision_dim']],
+                                      wheel_targets=critic_before[:, 61+self.config['model']['collision_dim']:65+self.config['model']['collision_dim']],
                                       successor_obs=successor_critic[:, :58])
                     else:
                         fields["old_logits"] = result["old_logits"]
@@ -208,6 +212,8 @@ class MUJICARunner:
     def load(self, path, load_optimizer=True):
         payload = load_checkpoint(path, self.device)
         validate_skill_metadata(payload.get("metadata", {}))
+        if payload.get('metadata', {}).get('joint_names') != self.metadata.get('joint_names'):
+            raise ValueError('Resume checkpoint belongs to a different robot joint contract')
         if payload["config"] != self.config:
             raise ValueError("Resume configuration differs: use checkpoint config or start a new run")
         if load_optimizer and payload.get("metadata", {}).get("reward_profile") != self.metadata.get("reward_profile"):
